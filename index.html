@@ -143,7 +143,6 @@
         <section id="gallery-section" class="mt-8">
             <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">Community Gallery</h2>
             <div id="figurine-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                <p class="text-center text-gray-500 col-span-full">Loading gallery...</p>
             </div>
         </section>
 
@@ -162,7 +161,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Set global variables from the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -302,22 +301,28 @@
                 });
                 
                 // Sort by creation time, newest first
-                figurines.sort((a, b) => b.createdAt.toDate() - a.createdAt.toDate());
+                figurines.sort((a, b) => {
+                    const dateA = a.createdAt ? a.createdAt.toDate() : new Date(0);
+                    const dateB = b.createdAt ? b.createdAt.toDate() : new Date(0);
+                    return dateB - dateA;
+                });
 
-                figurineGallery.innerHTML = '';
+                figurineGallery.innerHTML = ''; // Clear previous content
                 if (figurines.length === 0) {
                     figurineGallery.innerHTML = '<p class="text-center text-gray-500 col-span-full">No figurines in the gallery yet. Be the first to create one!</p>';
                 } else {
                     figurines.forEach(figurine => {
-                        const img = document.createElement('img');
-                        img.src = `data:image/jpeg;base64,${figurine.imageData}`;
-                        img.alt = figurine.prompt;
-                        img.className = 'w-full h-auto rounded-xl shadow-lg cursor-pointer transition-transform duration-200 hover:scale-105';
-                        img.onclick = () => {
-                            loadFigurineTo3D(img.src);
-                            resultContainer.classList.remove('hidden');
-                        };
-                        figurineGallery.appendChild(img);
+                        if (figurine.imageData) {
+                            const img = document.createElement('img');
+                            img.src = `data:image/jpeg;base64,${figurine.imageData}`;
+                            img.alt = figurine.prompt;
+                            img.className = 'w-full h-auto rounded-xl shadow-lg cursor-pointer transition-transform duration-200 hover:scale-105';
+                            img.onclick = () => {
+                                loadFigurineTo3D(img.src);
+                                resultContainer.classList.remove('hidden');
+                            };
+                            figurineGallery.appendChild(img);
+                        }
                     });
                 }
             });
