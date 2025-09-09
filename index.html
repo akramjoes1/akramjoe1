@@ -112,7 +112,7 @@
                     </select>
                 </div>
                 
-                <button id="generate-btn" class="w-full text-white font-bold py-5 px-8 rounded-3xl shadow-lg btn-gradient">
+                <button id="generate-btn" class="w-full text-white font-bold py-5 px-8 rounded-3xl shadow-lg btn-gradient" disabled>
                     Generate Figurine
                 </button>
             </div>
@@ -150,28 +150,26 @@
         <div class="ad-container w-full max-w-lg mt-12 self-center">
             <p>AI Art Inspiration Ad</p>
         </div>
-
     </div>
 
-    <!-- Load Three.js and OrbitControls as global scripts first -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-
-    <!-- Firebase SDK (loaded as a module) -->
     <script type="module">
+        // Three.js and OrbitControls imports using reliable CDN URLs
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js';
+        import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js';
+
+        // Firebase SDK imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Set global variables from the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
-        let userId = null;
+        let db, auth, userId;
+        let uploadedImageData = null;
+        let scene, camera, renderer, controls, figurineMesh;
 
         // API configuration
         const apiKey = ""; 
@@ -188,35 +186,163 @@
         const threeCanvas = document.getElementById('three-canvas');
         const downloadBtn = document.getElementById('download-btn');
         const figurineGallery = document.getElementById('figurine-gallery');
-        let uploadedImageData = null;
+        const figurineMaterialSelect = document.getElementById('figurine-material');
 
-        // Three.js variables
-        let scene, camera, renderer, controls;
-        let figurineMesh;
 
         // Default prompt
         promptInput.value = "Create a 1/7 scale commercialized figurine of the characters in the picture, in a realistic style, in a real environment. The figurine is placed on a computer desk. The figurine has a round transparent acrylic base, with no text on the base. The content on the computer screen is a 3D modeling process of this figurine. Next to the computer screen is a toy packaging box, designed in a style reminiscent of high-quality collectible figures, printed with original artwork. The packaging features two-dimensional flat illustrations.";
+        
+        // Initialize Firebase services and set up event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
 
-        window.onload = function () {
-            // Initialize Firebase Authentication
-            onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    userId = user.uid;
-                    console.log("Firebase Auth Ready. User ID:", userId);
-                    setupThreeJS();
-                    loadFigurines();
-                } else {
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
+                // Initialize Firebase Authentication
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log("Firebase Auth Ready. User ID:", userId);
+                        setupThreeJS();
+                        loadFigurines();
                     } else {
-                        await signInAnonymously(auth);
+                        try {
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } else {
+                                await signInAnonymously(auth);
+                            }
+                        } catch (error) {
+                            console.error("Error signing in to Firebase:", error);
+                        }
                     }
+                });
+            } catch (error) {
+                console.error("Error initializing Firebase:", error);
+                showCustomMessage("Failed to initialize the application. Please try again.");
+            }
+
+            // Event listener for the image upload box
+            uploadBox.addEventListener('click', () => uploadInput.click());
+
+            // Event listener for the file input change
+            uploadInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        uploadedImageData = e.target.result.split(',')[1];
+                        uploadBox.innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover rounded-2xl shadow-inner"/>`;
+                        uploadBox.classList.remove('p-10', 'flex-col');
+                        uploadBox.classList.add('h-64');
+                        // Enable the button once the image is loaded
+                        generateBtn.disabled = false;
+                    };
+                    reader.readAsDataURL(file);
                 }
             });
-        };
+
+            // Event listener for the generate button
+            generateBtn.addEventListener('click', async () => {
+                if (!uploadedImageData) {
+                    showCustomMessage("Please upload an image first.");
+                    return;
+                }
+
+                resultContainer.classList.add('hidden');
+                loadingDiv.classList.remove('hidden');
+                generateBtn.disabled = true;
+
+                const userPrompt = `${promptInput.value}. Material is ${figurineMaterialSelect.value}.`;
+
+                const payload = {
+                    contents: [
+                        {
+                            parts: [
+                                { text: userPrompt },
+                                {
+                                    inlineData: {
+                                        mimeType: "image/jpeg",
+                                        data: uploadedImageData
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    generationConfig: {
+                        responseModalities: ["TEXT", "IMAGE"],
+                    },
+                };
+
+                try {
+                    let response = null;
+                    let retries = 0;
+                    const maxRetries = 5;
+                    const baseDelay = 1000;
+
+                    while (retries < maxRetries) {
+                        try {
+                            response = await fetch(apiUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                            if (response.status !== 429) {
+                                break;
+                            }
+                        } catch (error) {
+                            console.error('Fetch attempt failed:', error);
+                        }
+                        retries++;
+                        await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
+                    }
+
+                    if (!response || !response.ok) {
+                        throw new Error(`HTTP error! status: ${response ? response.status : 'unknown'}`);
+                    }
+
+                    const result = await response.json();
+                    const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+
+                    if (part && part.inlineData && part.inlineData.data) {
+                        const base64Data = part.inlineData.data;
+                        const mimeType = part.inlineData.mimeType || 'image/png';
+                        const dataUri = `data:${mimeType};base64,${base64Data}`;
+                        
+                        loadFigurineTo3D(dataUri);
+                        resultContainer.classList.remove('hidden');
+                        
+                        downloadBtn.onclick = () => {
+                            const a = document.createElement('a');
+                            a.href = dataUri;
+                            a.download = 'figurine.png';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                        };
+
+                        await saveFigurine(base64Data, userPrompt);
+                    } else {
+                        console.error("No image data found in the API response.");
+                        showCustomMessage("Oops! Something went wrong. The AI may not have been able to generate an image. Please try again.");
+                    }
+                } catch (error) {
+                    console.error('Failed to generate figurine:', error);
+                    showCustomMessage("Oops! Something went wrong. Please try again.");
+                } finally {
+                    loadingDiv.classList.add('hidden');
+                    generateBtn.disabled = false;
+                }
+            });
+        });
 
         // Initialize Three.js scene
         function setupThreeJS() {
+            if (!threeCanvas) {
+                console.error("Three.js canvas not found.");
+                return;
+            }
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, threeCanvas.offsetWidth / threeCanvas.offsetHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, antialias: true, alpha: true });
@@ -250,6 +376,7 @@
         }
 
         function onWindowResize() {
+            if (!threeCanvas || !camera || !renderer) return;
             camera.aspect = threeCanvas.offsetWidth / threeCanvas.offsetHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(threeCanvas.offsetWidth, threeCanvas.offsetHeight);
@@ -257,16 +384,23 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            controls.update();
-            renderer.render(scene, camera);
+            if (controls) controls.update();
+            if (renderer && scene && camera) renderer.render(scene, camera);
         }
 
         // Load figurine from a data URI onto the 3D model
         function loadFigurineTo3D(dataUri) {
+            if (!figurineMesh) {
+                console.error("Figurine mesh not initialized.");
+                return;
+            }
             const textureLoader = new THREE.TextureLoader();
             textureLoader.load(dataUri, (texture) => {
                 const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
                 figurineMesh.material = material;
+            }, undefined, (err) => {
+                console.error("Error loading texture:", err);
+                showCustomMessage("Failed to load the figurine's texture. Please try again.");
             });
         }
 
@@ -281,9 +415,10 @@
                 await addDoc(figurinesCollection, {
                     prompt: userPrompt,
                     imageData: imageData,
-                    createdAt: new Date(),
+                    createdAt: serverTimestamp(),
                     userId: userId
                 });
+                console.log("Figurine saved successfully!");
             } catch (error) {
                 console.error("Error saving figurine to Firestore:", error);
             }
@@ -325,119 +460,10 @@
                         }
                     });
                 }
+            }, (error) => {
+                console.error("Error fetching figurines from Firestore:", error);
             });
         }
-
-        // Event listener for the image upload box
-        uploadBox.addEventListener('click', () => uploadInput.click());
-
-        // Event listener for the file input change
-        uploadInput.addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    uploadedImageData = e.target.result.split(',')[1];
-                    uploadBox.innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover rounded-2xl shadow-inner"/>`;
-                    uploadBox.classList.remove('p-10', 'flex-col');
-                    uploadBox.classList.add('h-64');
-                };
-                reader.readAsDataURL(file);
-            }
-        });
-
-        // Event listener for the generate button
-        generateBtn.addEventListener('click', async () => {
-            if (!uploadedImageData) {
-                showCustomMessage("Please upload an image first.");
-                return;
-            }
-
-            resultContainer.classList.add('hidden');
-            loadingDiv.classList.remove('hidden');
-            generateBtn.disabled = true;
-
-            const userPrompt = `${promptInput.value}. Material is ${document.getElementById('figurine-material').value}.`;
-
-            const payload = {
-                contents: [
-                    {
-                        parts: [
-                            { text: userPrompt },
-                            {
-                                inlineData: {
-                                    mimeType: "image/jpeg",
-                                    data: uploadedImageData
-                                }
-                            }
-                        ]
-                    }
-                ],
-                generationConfig: {
-                    responseModalities: ["TEXT", "IMAGE"],
-                },
-            };
-
-            try {
-                let response = null;
-                let retries = 0;
-                const maxRetries = 5;
-                const baseDelay = 1000;
-
-                while (retries < maxRetries) {
-                    try {
-                        response = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-                        if (response.status !== 429) {
-                            break;
-                        }
-                    } catch (error) {
-                        console.error('Fetch attempt failed:', error);
-                    }
-                    retries++;
-                    await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
-                }
-
-                if (!response || !response.ok) {
-                    throw new Error(`HTTP error! status: ${response ? response.status : 'unknown'}`);
-                }
-
-                const result = await response.json();
-                const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-
-                if (part && part.inlineData && part.inlineData.data) {
-                    const base64Data = part.inlineData.data;
-                    const mimeType = part.inlineData.mimeType || 'image/png';
-                    const dataUri = `data:${mimeType};base64,${base64Data}`;
-                    
-                    loadFigurineTo3D(dataUri);
-                    resultContainer.classList.remove('hidden');
-                    
-                    downloadBtn.onclick = () => {
-                        const a = document.createElement('a');
-                        a.href = dataUri;
-                        a.download = 'figurine.png';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                    };
-
-                    await saveFigurine(base64Data, userPrompt);
-                } else {
-                    console.error("No image data found in the API response.");
-                    showCustomMessage("Oops! Something went wrong. The AI may not have been able to generate an image. Please try again.");
-                }
-            } catch (error) {
-                console.error('Failed to generate figurine:', error);
-                showCustomMessage("Oops! Something went wrong. Please try again.");
-            } finally {
-                loadingDiv.classList.add('hidden');
-                generateBtn.disabled = false;
-            }
-        });
 
         // Function to show a custom message box
         function showCustomMessage(message) {
