@@ -190,6 +190,8 @@
         const apiKey = ""; 
         const modelName = "gemini-2.5-flash-image-preview";
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        const MAX_FILE_SIZE_MB = 4; // Maximum file size in MB
+        const MAX_DIMENSION = 2048; // Maximum width or height
 
         // UI Elements
         const uploadInput = document.getElementById('image-upload');
@@ -249,10 +251,29 @@
                 console.log("File input change event fired.");
                 console.log("Selected file:", file);
 
-                if (file) {
-                    // Use URL.createObjectURL for a reliable preview
-                    const objectUrl = URL.createObjectURL(file);
-                    
+                if (!file) {
+                    return;
+                }
+
+                // Check file size
+                if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+                    showCustomMessage(`Please upload an image smaller than ${MAX_FILE_SIZE_MB}MB.`);
+                    uploadInput.value = ''; // Clear the input
+                    return;
+                }
+
+                // Check image dimensions after it's loaded
+                const img = new Image();
+                const objectUrl = URL.createObjectURL(file);
+                img.onload = () => {
+                    if (img.width > MAX_DIMENSION || img.height > MAX_DIMENSION) {
+                        showCustomMessage(`Please upload an image with dimensions less than ${MAX_DIMENSION}x${MAX_DIMENSION} pixels.`);
+                        URL.revokeObjectURL(objectUrl);
+                        uploadInput.value = ''; // Clear the input
+                        return;
+                    }
+
+                    // If checks pass, proceed to read and preview
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         const dataUrlParts = e.target.result.split(',');
@@ -272,21 +293,14 @@
                     };
                     reader.readAsDataURL(file);
 
-                    // Display the image preview using the object URL
-                    const img = document.createElement('img');
-                    img.src = objectUrl;
-                    img.className = 'w-full h-full object-cover rounded-2xl shadow-inner';
                     imagePreview.innerHTML = '';
                     imagePreview.appendChild(img);
-                    
                     imagePreview.classList.remove('hidden');
                     uploadPrompt.classList.add('hidden');
-                    
                     console.log("Image preview set using object URL.");
+                };
+                img.src = objectUrl;
 
-                } else {
-                    console.log("File selection was cancelled or no file was selected.");
-                }
             });
 
             // Event listener for the generate button
@@ -347,7 +361,8 @@
                     }
 
                     if (!response || !response.ok) {
-                        throw new Error(`HTTP error! status: ${response ? response.status : 'unknown'}`);
+                        const errorData = await response.json();
+                        throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
                     }
 
                     const result = await response.json();
@@ -377,7 +392,7 @@
                     }
                 } catch (error) {
                     console.error('Failed to generate figurine:', error);
-                    showCustomMessage("Oops! Something went wrong. Please try again.");
+                    showCustomMessage(`An error occurred: ${error.message}. Please try again.`);
                 } finally {
                     loadingDiv.classList.add('hidden');
                     generateBtn.disabled = false;
