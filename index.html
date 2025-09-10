@@ -85,6 +85,38 @@
         .hidden {
             display: none;
         }
+        .message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 100;
+            background-color: white;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            display: none;
+        }
+        .prompt-container {
+            position: relative;
+        }
+        .prompt-container .clear-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: #f1f5f9;
+            color: #64748b;
+            padding: 0.5rem 1rem;
+            border-radius: 0.75rem;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .prompt-container .clear-btn:hover {
+            background: #e2e8f0;
+            color: #334155;
+        }
     </style>
 </head>
 <body>
@@ -115,7 +147,10 @@
                 </label>
                 <input type="file" id="image-upload" accept="image/*" class="hidden">
                 
-                <textarea id="prompt-input" rows="5" class="w-full p-6 border-2 border-gray-300 rounded-3xl focus:ring-4 focus:ring-purple-300 focus:border-purple-500 transition-all duration-200 resize-none placeholder-gray-400" placeholder="Describe the figurine features here..."></textarea>
+                <div class="prompt-container">
+                    <textarea id="prompt-input" rows="5" class="w-full p-6 border-2 border-gray-300 rounded-3xl focus:ring-4 focus:ring-purple-300 focus:border-purple-500 transition-all duration-200 resize-none placeholder-gray-400" placeholder="Describe the figurine features here..."></textarea>
+                    <button id="clear-prompt-btn" class="clear-btn">Clear</button>
+                </div>
 
                 <div class="flex items-center space-x-4">
                     <label for="figurine-material" class="text-gray-700 font-semibold">Material:</label>
@@ -126,7 +161,7 @@
                     </select>
                 </div>
                 
-                <button id="generate-btn" class="w-full text-white font-bold py-5 px-8 rounded-3xl shadow-lg btn-gradient" disabled>
+                <button id="generate-btn" class="w-full text-white font-bold py-5 px-8 rounded-3xl shadow-lg btn-gradient disabled">
                     Generate Figurine
                 </button>
             </div>
@@ -164,6 +199,11 @@
         <div class="ad-container w-full max-w-lg mt-12 self-center">
             <p>AI Art Inspiration Ad</p>
         </div>
+    </div>
+
+    <div id="message-modal" class="message-box">
+        <p id="message-text" class="text-xl font-semibold mb-4 text-gray-800"></p>
+        <button onclick="document.getElementById('message-modal').style.display='none';" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2 rounded-xl transition-colors duration-200">OK</button>
     </div>
 
     <script type="module">
@@ -206,6 +246,9 @@
         const downloadBtn = document.getElementById('download-btn');
         const figurineGallery = document.getElementById('figurine-gallery');
         const figurineMaterialSelect = document.getElementById('figurine-material');
+        const messageModal = document.getElementById('message-modal');
+        const messageText = document.getElementById('message-text');
+        const clearPromptBtn = document.getElementById('clear-prompt-btn');
 
 
         // Default prompt
@@ -214,13 +257,13 @@
         // Initialize Firebase services and set up event listeners
         document.addEventListener('DOMContentLoaded', () => {
             console.log("DOM content loaded. Attaching event listeners.");
-
+            
+            // Wait for auth state to be ready before doing anything with Firebase
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // Initialize Firebase Authentication
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
@@ -236,6 +279,7 @@
                             }
                         } catch (error) {
                             console.error("Error signing in to Firebase:", error);
+                            showCustomMessage("Failed to initialize the application. Please try again.");
                         }
                     }
                 });
@@ -245,161 +289,216 @@
             }
 
             // Event listener for the file input change
-            uploadInput.addEventListener('change', (event) => {
-                const file = event.target.files[0];
-                
-                console.log("File input change event fired.");
-                console.log("Selected file:", file);
+            uploadInput.addEventListener('change', handleFileChange);
+            
+            // Event listener for the generate button
+            generateBtn.addEventListener('click', handleGenerate);
 
-                if (!file) {
-                    return;
-                }
+            // Event listener for the clear prompt button
+            clearPromptBtn.addEventListener('click', () => {
+                promptInput.value = '';
+            });
 
-                // Check file size
-                if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-                    showCustomMessage(`Please upload an image smaller than ${MAX_FILE_SIZE_MB}MB.`);
-                    uploadInput.value = ''; // Clear the input
-                    return;
-                }
+            // Event listener for download button, but we'll add it dynamically
+            // to avoid multiple listeners
+        });
 
-                // Check image dimensions after it's loaded
-                const img = new Image();
-                const objectUrl = URL.createObjectURL(file);
-                img.onload = () => {
-                    if (img.width > MAX_DIMENSION || img.height > MAX_DIMENSION) {
-                        showCustomMessage(`Please upload an image with dimensions less than ${MAX_DIMENSION}x${MAX_DIMENSION} pixels.`);
-                        URL.revokeObjectURL(objectUrl);
-                        uploadInput.value = ''; // Clear the input
-                        return;
-                    }
+        function handleFileChange(event) {
+            const file = event.target.files[0];
+            console.log("File input change event fired. File:", file ? file.name : "none");
 
-                    // If checks pass, proceed to read and preview
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        const dataUrlParts = e.target.result.split(',');
+            // Reset UI and state
+            updateGenerateButtonState(false);
+            uploadedImageData = null;
+            imagePreview.innerHTML = '';
+            imagePreview.classList.add('hidden');
+            uploadPrompt.classList.remove('hidden');
+
+            if (!file) {
+                console.warn("No file selected.");
+                return;
+            }
+
+            if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+                const message = `Please upload an image smaller than ${MAX_FILE_SIZE_MB}MB.`;
+                showCustomMessage(message);
+                console.error(message);
+                uploadInput.value = '';
+                return;
+            }
+            
+            try {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const dataUri = e.target.result;
+                    const img = new Image();
+                    
+                    img.onload = () => {
+                        if (img.width > MAX_DIMENSION || img.height > MAX_DIMENSION) {
+                            const message = `Please upload an image with dimensions less than ${MAX_DIMENSION}x${MAX_DIMENSION} pixels.`;
+                            showCustomMessage(message);
+                            console.error(message);
+                            uploadInput.value = '';
+                            return;
+                        }
+                        
+                        // Validation passed, store data and update UI
+                        const dataUrlParts = dataUri.split(',');
                         uploadedImageData = dataUrlParts.length > 1 ? dataUrlParts[1] : null;
                         uploadedImageMimeType = file.type;
 
                         if (uploadedImageData) {
-                            console.log("File read successfully as base64.");
-                            generateBtn.disabled = false;
-                            generateBtn.classList.remove('disabled');
+                            imagePreview.innerHTML = `<img src="${dataUri}" class="w-full h-full object-contain rounded-xl">`;
+                            imagePreview.classList.remove('hidden');
+                            uploadPrompt.classList.add('hidden');
+                            updateGenerateButtonState(true);
+                            console.log("File successfully validated and image preview shown.");
                         } else {
-                            console.error("FileReader result was invalid or empty.");
-                            showCustomMessage("There was an issue processing your image. Please try a different file.");
-                            generateBtn.disabled = true;
-                            generateBtn.classList.add('disabled');
+                            const message = "There was an issue processing your image. The data was empty after reading the file.";
+                            console.error(message);
+                            showCustomMessage(message);
                         }
                     };
-                    reader.readAsDataURL(file);
-
-                    imagePreview.innerHTML = '';
-                    imagePreview.appendChild(img);
-                    imagePreview.classList.remove('hidden');
-                    uploadPrompt.classList.add('hidden');
-                    console.log("Image preview set using object URL.");
+                    
+                    img.onerror = () => {
+                        const message = "The uploaded file could not be loaded as an image. Please try a different file.";
+                        console.error(message);
+                        showCustomMessage(message);
+                        uploadInput.value = '';
+                        // No need to reset UI here, it was done at the start of the function.
+                    };
+                    
+                    img.src = dataUri;
                 };
-                img.src = objectUrl;
 
-            });
+                reader.onerror = (e) => {
+                    const message = `An error occurred while reading the file: ${e.target.error.name}. Please try a different file.`;
+                    console.error(message, e.target.error);
+                    showCustomMessage(message);
+                    uploadInput.value = '';
+                };
+                
+                reader.readAsDataURL(file);
+            } catch (error) {
+                const message = `An unexpected error occurred: ${error.message}`;
+                console.error(message, error);
+                showCustomMessage(message);
+                uploadInput.value = '';
+            }
+        }
 
-            // Event listener for the generate button
-            generateBtn.addEventListener('click', async () => {
-                if (generateBtn.disabled) {
-                    showCustomMessage("Please upload an image first.");
-                    return;
-                }
-                console.log("Generate button clicked.");
-
-                resultContainer.classList.add('hidden');
-                loadingDiv.classList.remove('hidden');
-                generateBtn.disabled = true;
+        function updateGenerateButtonState(isEnabled) {
+            generateBtn.disabled = !isEnabled;
+            if (isEnabled) {
+                generateBtn.classList.remove('disabled');
+            } else {
                 generateBtn.classList.add('disabled');
+            }
+        }
 
-                const userPrompt = `${promptInput.value}. Material is ${figurineMaterialSelect.value}.`;
+        async function handleGenerate() {
+            console.log("Generate button clicked. Current uploadedImageData status:", uploadedImageData ? "ready" : "not available");
+            if (!uploadedImageData) {
+                showCustomMessage("Please upload a valid image first.");
+                console.error("Generate button clicked but no image data is available.");
+                return;
+            }
+            
+            resultContainer.classList.add('hidden');
+            loadingDiv.classList.remove('hidden');
+            updateGenerateButtonState(false);
 
-                const payload = {
-                    contents: [
-                        {
-                            parts: [
-                                { text: userPrompt },
-                                {
-                                    inlineData: {
-                                        mimeType: uploadedImageMimeType,
-                                        data: uploadedImageData
-                                    }
+            const userPrompt = `${promptInput.value}. Material is ${figurineMaterialSelect.value}.`;
+
+            const payload = {
+                contents: [
+                    {
+                        parts: [
+                            { text: userPrompt },
+                            {
+                                inlineData: {
+                                    mimeType: uploadedImageMimeType,
+                                    data: uploadedImageData
                                 }
-                            ]
-                        }
-                    ],
-                    generationConfig: {
-                        responseModalities: ["TEXT", "IMAGE"],
-                    },
-                };
-
-                try {
-                    let response = null;
-                    let retries = 0;
-                    const maxRetries = 5;
-                    const baseDelay = 1000;
-
-                    while (retries < maxRetries) {
-                        try {
-                            response = await fetch(apiUrl, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            });
-                            if (response.status !== 429) {
-                                break;
                             }
-                        } catch (error) {
-                            console.error('Fetch attempt failed:', error);
+                        ]
+                    }
+                ],
+                generationConfig: {
+                    responseModalities: ["TEXT", "IMAGE"],
+                },
+            };
+            console.log("Attempting to send payload to API.");
+
+            try {
+                let response = null;
+                let retries = 0;
+                const maxRetries = 5;
+                const baseDelay = 1000;
+
+                while (retries < maxRetries) {
+                    try {
+                        console.log(`Fetch attempt ${retries + 1}...`);
+                        response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (response.status !== 429) {
+                            console.log("Fetch successful, status:", response.status);
+                            break;
                         }
-                        retries++;
-                        await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
+                    } catch (error) {
+                        console.error('Fetch attempt failed:', error);
                     }
-
-                    if (!response || !response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
-                    }
-
-                    const result = await response.json();
-                    const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-
-                    if (part && part.inlineData && part.inlineData.data) {
-                        const base64Data = part.inlineData.data;
-                        const mimeType = part.inlineData.mimeType || 'image/png';
-                        const dataUri = `data:${mimeType};base64,${base64Data}`;
-                        
-                        loadFigurineTo3D(dataUri);
-                        resultContainer.classList.remove('hidden');
-                        
-                        downloadBtn.onclick = () => {
-                            const a = document.createElement('a');
-                            a.href = dataUri;
-                            a.download = 'figurine.png';
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                        };
-
-                        await saveFigurine(base64Data, userPrompt);
-                    } else {
-                        console.error("No image data found in the API response.");
-                        showCustomMessage("Oops! Something went wrong. The AI may not have been able to generate an image. Please try again.");
-                    }
-                } catch (error) {
-                    console.error('Failed to generate figurine:', error);
-                    showCustomMessage(`An error occurred: ${error.message}. Please try again.`);
-                } finally {
-                    loadingDiv.classList.add('hidden');
-                    generateBtn.disabled = false;
-                    generateBtn.classList.remove('disabled');
+                    retries++;
+                    await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
                 }
-            });
-        });
+
+                if (!response || !response.ok) {
+                    const errorData = await response.json();
+                    console.error('API Error Response:', errorData);
+                    throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
+                }
+
+                const result = await response.json();
+                const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+
+                if (part && part.inlineData && part.inlineData.data) {
+                    console.log("Received valid image data from API.");
+                    const base64Data = part.inlineData.data;
+                    const mimeType = part.inlineData.mimeType || 'image/png';
+                    const dataUri = `data:${mimeType};base64,${base64Data}`;
+                    
+                    loadFigurineTo3D(dataUri);
+                    resultContainer.classList.remove('hidden');
+                    
+                    // Add download functionality
+                    downloadBtn.onclick = () => {
+                        const a = document.createElement('a');
+                        a.href = dataUri;
+                        a.download = 'figurine.png';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    };
+
+                    await saveFigurine(base64Data, userPrompt);
+                    showCustomMessage("Figurine generated successfully!");
+                } else {
+                    const message = "Oops! The AI did not return an image. This can happen with certain prompts.";
+                    console.error(message, result);
+                    showCustomMessage(message);
+                }
+            } catch (error) {
+                const message = `An error occurred: ${error.message}. Please try again.`;
+                console.error('Failed to generate figurine:', error);
+                showCustomMessage(message);
+            } finally {
+                loadingDiv.classList.add('hidden');
+                updateGenerateButtonState(true);
+            }
+        }
 
         // Initialize Three.js scene
         function setupThreeJS() {
@@ -531,15 +630,9 @@
 
         // Function to show a custom message box
         function showCustomMessage(message) {
-            const messageBox = document.createElement('div');
-            messageBox.className = 'fixed inset-0 z-50 bg-gray-600 bg-opacity-50 flex items-center justify-center';
-            messageBox.innerHTML = `
-                <div class="bg-white p-8 rounded-2xl shadow-xl text-center">
-                    <p class="text-xl font-semibold mb-4 text-gray-800">${message}</p>
-                    <button onclick="this.parentNode.parentNode.remove()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2 rounded-xl transition-colors duration-200">OK</button>
-                </div>
-            `;
-            document.body.appendChild(messageBox);
+            messageText.textContent = message;
+            messageModal.style.display = 'block';
+            console.log("Custom Message Shown:", message);
         }
     </script>
 </body>
