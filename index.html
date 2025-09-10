@@ -233,25 +233,42 @@
                 showCustomMessage("Failed to initialize the application. Please try again.");
             }
 
-            // The click handler for the upload box is no longer needed since the label now handles it.
-
             // Event listener for the file input change
             uploadInput.addEventListener('change', (event) => {
                 const file = event.target.files[0];
-                console.log("File input changed. File selected:", file);
+                
+                // Add new logs to debug the file object
+                console.log("File input change event fired.");
+                console.log("Event target files:", event.target.files);
+                console.log("Selected file:", file);
+
                 if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        uploadedImageData = e.target.result.split(',')[1];
-                        uploadBox.innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover rounded-2xl shadow-inner"/>`;
-                        uploadBox.classList.remove('p-10', 'flex-col');
-                        uploadBox.classList.add('h-64');
-                        // Enable the button once the image is loaded
-                        generateBtn.disabled = false;
-                        generateBtn.classList.remove('disabled');
-                        console.log("Image loaded and generate button enabled.");
-                    };
-                    reader.readAsDataURL(file);
+                    try {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            uploadedImageData = e.target.result.split(',')[1];
+                            uploadBox.innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover rounded-2xl shadow-inner"/>`;
+                            uploadBox.classList.remove('p-10', 'flex-col');
+                            uploadBox.classList.add('h-64');
+                            // Enable the button once the image is loaded and a valid image data has been assigned
+                            if (uploadedImageData) {
+                                generateBtn.disabled = false;
+                                generateBtn.classList.remove('disabled');
+                                console.log("Image loaded and generate button enabled.");
+                            } else {
+                                console.error("FileReader result was invalid or empty.");
+                                showCustomMessage("There was an issue processing your image. Please try a different file.");
+                            }
+                        };
+                        reader.readAsDataURL(file);
+                        console.log("FileReader started for file:", file.name);
+                    } catch (error) {
+                        console.error("Error reading file:", error);
+                        showCustomMessage("An error occurred while reading your file. Please ensure it is a valid image.");
+                    }
+                } else {
+                    // This case handles when the user cancels the file dialog
+                    console.log("File selection was cancelled or no file was selected.");
                 }
             });
 
@@ -495,3 +512,4 @@
     </script>
 </body>
 </html>
+
