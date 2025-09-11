@@ -306,7 +306,7 @@
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let db, auth, userId;
-        let uploadedFile = null; // Store the file object itself
+        let uploadedFileData = null; // Store the Base64 data directly
         let uploadedImageMimeType = null;
         let scene, camera, renderer, controls, figurineMesh;
         
@@ -337,6 +337,7 @@
         const figurineMaterialSelect = document.getElementById('figurine-material');
         const clearPromptBtn = document.getElementById('clear-prompt-btn');
         const suggestPromptBtn = document.getElementById('suggest-prompt-btn');
+        const statusBox = document.getElementById('status-box');
 
 
         // Default prompt
@@ -354,7 +355,6 @@
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
-                        // setupThreeJS(); // Will be called by window.onload
                         loadFigurines();
                     } else {
                         try {
@@ -388,7 +388,6 @@
 
             // Load AdSense after the DOM is ready to ensure containers have a width
             loadAdSenseAds();
-
         });
 
         window.onload = function() {
@@ -410,7 +409,7 @@
                 
                 // Reset UI and state
                 updateGenerateButtonState(false);
-                uploadedFile = null;
+                uploadedFileData = null;
                 imagePreview.innerHTML = '';
                 imagePreview.classList.add('hidden');
                 uploadPrompt.classList.remove('hidden');
@@ -422,7 +421,6 @@
                     return;
                 }
 
-                // Explicitly check for file type
                 if (!file.type.startsWith('image/')) {
                     statusBox.textContent = "Error: File is not a valid image.";
                     statusBox.style.backgroundColor = '#fca5a5';
@@ -437,54 +435,59 @@
                     return;
                 }
 
-                statusBox.textContent = "File selected! Processing...";
+                statusBox.textContent = "File selected! Reading image...";
                 statusBox.style.backgroundColor = '#d1fae5';
 
-                // Store the file object for later use
-                uploadedFile = file;
-                uploadedImageMimeType = file.type;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const dataUri = e.target.result;
+                    const dataUrlParts = dataUri.split(',');
+                    uploadedFileData = dataUrlParts.length > 1 ? dataUrlParts[1] : null;
+                    uploadedImageMimeType = file.type;
 
-                // Show a temporary preview using createObjectURL
-                const objectURL = URL.createObjectURL(file);
-                const img = new Image();
-                img.onload = () => {
-                    URL.revokeObjectURL(objectURL); // Clean up the URL
-                    if (img.width > MAX_DIMENSION || img.height > MAX_DIMENSION) {
-                        statusBox.textContent = `Error: Image dimensions are too large (${img.width}x${img.height}). Max is ${MAX_DIMENSION}x${MAX_DIMENSION}.`;
+                    if (!uploadedFileData) {
+                        statusBox.textContent = "Error: Could not read image data.";
                         statusBox.style.backgroundColor = '#fca5a5';
-                        uploadInput.value = '';
-                        uploadedFile = null;
+                        uploadedFileData = null;
                         return;
                     }
-                    
-                    imagePreview.innerHTML = `<img src="${objectURL}" class="w-full h-full object-contain rounded-xl">`;
-                    imagePreview.classList.remove('hidden');
-                    processingMessage.classList.add('hidden');
-                    uploadPrompt.classList.add('hidden');
-                    updateGenerateButtonState(true);
-                    statusBox.textContent = "Preview generated successfully! You can now generate your figurine.";
-                    statusBox.style.backgroundColor = '#d1fae5';
+
+                    // Check dimensions
+                    const img = new Image();
+                    img.onload = () => {
+                        if (img.width > MAX_DIMENSION || img.height > MAX_DIMENSION) {
+                            statusBox.textContent = `Error: Image dimensions are too large (${img.width}x${img.height}). Max is ${MAX_DIMENSION}x${MAX_DIMENSION}.`;
+                            statusBox.style.backgroundColor = '#fca5a5';
+                            uploadedFileData = null;
+                            return;
+                        }
+
+                        // Show preview
+                        imagePreview.innerHTML = `<img src="${dataUri}" class="w-full h-full object-contain rounded-xl">`;
+                        imagePreview.classList.remove('hidden');
+                        uploadPrompt.classList.add('hidden');
+                        processingMessage.classList.add('hidden');
+                        updateGenerateButtonState(true);
+                        statusBox.textContent = "Image loaded successfully! You can now generate your figurine.";
+                        statusBox.style.backgroundColor = '#d1fae5';
+                    };
+                    img.src = dataUri;
                 };
 
-                img.onerror = () => {
-                    URL.revokeObjectURL(objectURL);
-                    statusBox.textContent = "Error: The uploaded file could not be loaded as an image.";
+                reader.onerror = () => {
+                    statusBox.textContent = "Error: Failed to read file.";
                     statusBox.style.backgroundColor = '#fca5a5';
-                    uploadInput.value = '';
-                    uploadedFile = null;
-                    processingMessage.classList.add('hidden');
-                    uploadPrompt.classList.remove('hidden');
+                    uploadedFileData = null;
                 };
 
-                img.src = objectURL;
-                processingMessage.classList.remove('hidden');
-
+                reader.readAsDataURL(file);
+                
             } catch (error) {
                 statusBox.textContent = `An unexpected error occurred: ${error.message}.`;
                 statusBox.style.backgroundColor = '#fca5a5';
                 console.error("File upload error:", error);
                 uploadInput.value = '';
-                uploadedFile = null;
+                uploadedFileData = null;
             }
         }
 
@@ -499,7 +502,7 @@
         }
 
         async function handleGenerate() {
-            if (!uploadedFile) {
+            if (!uploadedFileData) {
                 showCustomMessage("Please upload a valid image first.");
                 return;
             }
@@ -507,108 +510,92 @@
             resultContainer.classList.add('hidden');
             loadingDiv.classList.remove('hidden');
             updateGenerateButtonState(false);
+            
+            const userPrompt = `${promptInput.value}. Material is ${figurineMaterialSelect.value}.`;
 
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                const dataUri = e.target.result;
-                const dataUrlParts = dataUri.split(',');
-                const uploadedImageData = dataUrlParts.length > 1 ? dataUrlParts[1] : null;
-
-                if (!uploadedImageData) {
-                    const message = "Failed to convert image to Base64 data.";
-                    showCustomMessage(message);
-                    loadingDiv.classList.add('hidden');
-                    updateGenerateButtonState(true);
-                    return;
-                }
-                
-                const userPrompt = `${promptInput.value}. Material is ${figurineMaterialSelect.value}.`;
-
-                const payload = {
-                    contents: [
-                        {
-                            parts: [
-                                { text: userPrompt },
-                                {
-                                    inlineData: {
-                                        mimeType: uploadedImageMimeType,
-                                        data: uploadedImageData
-                                    }
+            const payload = {
+                contents: [
+                    {
+                        parts: [
+                            { text: userPrompt },
+                            {
+                                inlineData: {
+                                    mimeType: uploadedImageMimeType,
+                                    data: uploadedFileData
                                 }
-                            ]
-                        }
-                    ],
-                    generationConfig: {
-                        responseModalities: ["TEXT", "IMAGE"],
-                    },
-                };
-
-                try {
-                    let response = null;
-                    let retries = 0;
-                    const maxRetries = 5;
-                    const baseDelay = 1000;
-
-                    while (retries < maxRetries) {
-                        try {
-                            response = await fetch(figurineApiUrl, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            });
-                            if (response.status !== 429) {
-                                break;
                             }
-                        } catch (error) {}
-                        retries++;
-                        await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
-                    }
-
-                    if (!response || !response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
-                    }
-
-                    const result = await response.json();
-                    const part = result?.candidates?.[0]?.content?.parts?.[0];
-
-                    if (part && part.inlineData && part.inlineData.data) {
-                        const base64Data = part.inlineData.data;
-                        const mimeType = part.inlineData.mimeType || 'image/png';
-                        const dataUri = `data:${mimeType};base64,${base64Data}`;
-                        
-                        loadFigurineTo3D(dataUri);
-                        resultContainer.classList.remove('hidden');
-                        
-                        // Add download functionality
-                        downloadBtn.onclick = () => {
-                            const a = document.createElement('a');
-                            a.href = dataUri;
-                            a.download = 'figurine.png';
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                        };
-
-                        await saveFigurine(base64Data, userPrompt);
-                        showCustomMessage("Figurine generated successfully!");
-                    } else {
-                        const message = "Oops! The AI did not return an image. This can happen with certain prompts.";
-                        showCustomMessage(message);
-                    }
-                } catch (error) {
-                    const message = `An error occurred: ${error.message}. Please try again.`;
-                    showCustomMessage(message);
-                } finally {
-                    loadingDiv.classList.add('hidden');
-                    updateGenerateButtonState(true);
-                }
+                        ]
+                    },
+                ],
+                generationConfig: {
+                    responseModalities: ["TEXT", "IMAGE"],
+                },
             };
-            reader.readAsDataURL(uploadedFile);
+
+            try {
+                let response = null;
+                let retries = 0;
+                const maxRetries = 5;
+                const baseDelay = 1000;
+
+                while (retries < maxRetries) {
+                    try {
+                        response = await fetch(figurineApiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (response.status !== 429) {
+                            break;
+                        }
+                    } catch (error) {}
+                    retries++;
+                    await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
+                }
+
+                if (!response || !response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
+                }
+
+                const result = await response.json();
+                const part = result?.candidates?.[0]?.content?.parts?.[0];
+
+                if (part && part.inlineData && part.inlineData.data) {
+                    const base64Data = part.inlineData.data;
+                    const mimeType = part.inlineData.mimeType || 'image/png';
+                    const dataUri = `data:${mimeType};base64,${base64Data}`;
+                    
+                    loadFigurineTo3D(dataUri);
+                    resultContainer.classList.remove('hidden');
+                    
+                    // Add download functionality
+                    downloadBtn.onclick = () => {
+                        const a = document.createElement('a');
+                        a.href = dataUri;
+                        a.download = 'figurine.png';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    };
+
+                    await saveFigurine(base64Data, userPrompt);
+                    showCustomMessage("Figurine generated successfully!");
+                } else {
+                    const message = "Oops! The AI did not return an image. This can happen with certain prompts.";
+                    showCustomMessage(message);
+                }
+            } catch (error) {
+                const message = `An error occurred: ${error.message}. Please try again.`;
+                showCustomMessage(message);
+            } finally {
+                loadingDiv.classList.add('hidden');
+                updateGenerateButtonState(true);
+            }
         }
 
         async function handleSuggestPrompt() {
-            if (!uploadedFile) {
+            if (!uploadedFileData) {
                 showCustomMessage("Please upload a valid image first.");
                 return;
             }
@@ -617,69 +604,54 @@
             promptInput.value = 'Generating prompt suggestions...';
             suggestPromptBtn.disabled = true;
 
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                const dataUri = e.target.result;
-                const dataUrlParts = dataUri.split(',');
-                const uploadedImageData = dataUrlParts.length > 1 ? dataUrlParts[1] : null;
+            const systemInstruction = "Act as a creative prompt engineer for an AI image generator. Based on the following image and user's initial description, suggest a detailed and descriptive prompt for a realistic figurine. The prompt should be a single paragraph and start with 'A realistic figurine...'";
 
-                if (!uploadedImageData) {
-                    showCustomMessage("Failed to convert image for prompt suggestion.");
-                    promptInput.value = oldPromptText;
-                    suggestPromptBtn.disabled = false;
-                    return;
-                }
-
-                const systemInstruction = "Act as a creative prompt engineer for an AI image generator. Based on the following image and user's initial description, suggest a detailed and descriptive prompt for a realistic figurine. The prompt should be a single paragraph and start with 'A realistic figurine...'";
-
-                const payload = {
-                    contents: [
-                        {
-                            parts: [
-                                { text: `User's description: ${oldPromptText}` },
-                                {
-                                    inlineData: {
-                                        mimeType: uploadedImageMimeType,
-                                        data: uploadedImageData
-                                    }
+            const payload = {
+                contents: [
+                    {
+                        parts: [
+                            { text: `User's description: ${oldPromptText}` },
+                            {
+                                inlineData: {
+                                    mimeType: uploadedImageMimeType,
+                                    data: uploadedFileData
                                 }
-                            ]
-                        }
-                    ],
-                    systemInstruction: {
-                        parts: [{ text: systemInstruction }]
+                            }
+                        ]
                     }
-                };
-                
-                try {
-                    const response = await fetch(textApiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
+                ],
+                systemInstruction: {
+                    parts: [{ text: systemInstruction }]
                     }
-
-                    const result = await response.json();
-                    const suggestedPrompt = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    
-                    if (suggestedPrompt) {
-                        promptInput.value = suggestedPrompt;
-                    } else {
-                        showCustomMessage("Could not generate a prompt. Please try again.");
-                        promptInput.value = oldPromptText;
-                    }
-                } catch (error) {
-                    showCustomMessage(`An error occurred while suggesting a prompt: ${error.message}.`);
-                    promptInput.value = oldPromptText;
-                } finally {
-                    suggestPromptBtn.disabled = false;
-                }
             };
-            reader.readAsDataURL(uploadedFile);
+            
+            try {
+                const response = await fetch(textApiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
+                }
+
+                const result = await response.json();
+                const suggestedPrompt = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                
+                if (suggestedPrompt) {
+                    promptInput.value = suggestedPrompt;
+                } else {
+                    showCustomMessage("Could not generate a prompt. Please try again.");
+                    promptInput.value = oldPromptText;
+                }
+            } catch (error) {
+                showCustomMessage(`An error occurred while suggesting a prompt: ${error.message}.`);
+                promptInput.value = oldPromptText;
+            } finally {
+                suggestPromptBtn.disabled = false;
+            }
         }
 
         async function handleGenerateCaption(imageData) {
