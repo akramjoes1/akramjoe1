@@ -40,6 +40,7 @@
         }
         .ad-container {
             min-height: 100px;
+            min-width: 100px;
             background-color: #f1f5f9;
             display: flex;
             justify-content: center;
@@ -104,7 +105,7 @@
         .prompt-container {
             position: relative;
         }
-        .prompt-container .clear-btn {
+        .prompt-btn {
             position: absolute;
             top: 1rem;
             right: 1rem;
@@ -116,9 +117,59 @@
             transition: all 0.2s;
             cursor: pointer;
         }
-        .prompt-container .clear-btn:hover {
+        .prompt-btn:hover {
             background: #e2e8f0;
             color: #334155;
+        }
+        #status-box {
+            background-color: #e2e8f0;
+            color: #4a5568;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            text-align: center;
+            font-weight: 500;
+            transition: background-color 0.3s ease;
+        }
+        .gallery-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 1rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        .gallery-card img {
+            transition: transform 0.3s ease;
+        }
+        .gallery-card:hover img {
+            transform: scale(1.05);
+        }
+        .caption-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 0.5rem;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        .gallery-card:hover .caption-overlay {
+            opacity: 1;
+        }
+        .gallery-card button {
+            background-color: rgba(255, 255, 255, 0.9);
+            color: #4a5568;
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        .gallery-card:hover button {
+            opacity: 1;
         }
     </style>
 </head>
@@ -145,14 +196,24 @@
                             </svg>
                             <span class="mt-4 text-indigo-700 font-semibold text-xl">Click to upload your picture</span>
                         </div>
+                        <div id="processing-message" class="hidden text-center text-indigo-700 font-semibold text-xl">
+                            <svg class="animate-spin -ml-1 mr-3 h-6 w-6 text-indigo-600 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Loading your image...
+                        </div>
                         <div id="image-preview" class="w-full h-full hidden"></div>
                     </div>
                 </label>
                 <input type="file" id="image-upload" accept="image/*" class="hidden">
                 
+                <div id="status-box">Awaiting file upload...</div>
+                
                 <div class="prompt-container">
                     <textarea id="prompt-input" rows="5" class="w-full p-6 border-2 border-gray-300 rounded-3xl focus:ring-4 focus:ring-purple-300 focus:border-purple-500 transition-all duration-200 resize-none placeholder-gray-400" placeholder="Describe the figurine features here..."></textarea>
-                    <button id="clear-prompt-btn" class="clear-btn">Clear</button>
+                    <button id="clear-prompt-btn" class="prompt-btn">Clear</button>
+                    <button id="suggest-prompt-btn" class="prompt-btn right-20">✨Suggest a Prompt</button>
                 </div>
 
                 <div class="flex items-center space-x-4">
@@ -170,17 +231,14 @@
             </div>
 
             <div class="flex flex-col items-center justify-center">
-                <!-- AdSense unit 1 - Replace data-ad-client and data-ad-slot with your own -->
-                <div class="ad-container w-full max-w-lg mb-8">
+                <!-- AdSense unit 1 -->
+                <div class="ad-container w-full mb-8">
                     <ins class="adsbygoogle"
                          style="display:block"
                          data-ad-client="ca-pub-9651439714273887"
                          data-ad-slot="1111111111"
                          data-ad-format="auto"
                          data-full-width-responsive="true"></ins>
-                    <script>
-                         (adsbygoogle = window.adsbygoogle || []).push({});
-                    </script>
                 </div>
                 
                 <div id="loading" class="hidden text-purple-600 font-semibold text-lg flex items-center">
@@ -207,16 +265,13 @@
         </section>
 
         <!-- AdSense unit 2 -->
-        <div class="ad-container w-full max-w-lg mt-12 self-center">
+        <div class="ad-container w-full mt-12 self-center">
             <ins class="adsbygoogle"
                  style="display:block"
                  data-ad-client="ca-pub-9651439714273887"
                  data-ad-slot="2222222222"
                  data-ad-format="auto"
                  data-full-width-responsive="true"></ins>
-            <script>
-                 (adsbygoogle = window.adsbygoogle || []).push({});
-            </script>
         </div>
     </div>
 
@@ -235,20 +290,34 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // Function to show a custom message box
+        function showCustomMessage(message) {
+            const messageModal = document.getElementById('message-modal');
+            const messageText = document.getElementById('message-text');
+            if (messageModal && messageText) {
+                messageText.textContent = message;
+                messageModal.style.display = 'block';
+            }
+        }
+
         // Set global variables from the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let db, auth, userId;
-        let uploadedImageData = null;
+        let uploadedFile = null; // Store the file object itself
         let uploadedImageMimeType = null;
         let scene, camera, renderer, controls, figurineMesh;
-
+        
         // API configuration
         const apiKey = ""; 
-        const modelName = "gemini-2.5-flash-image-preview";
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        const figurineModelName = "gemini-2.5-flash-image-preview";
+        const figurineApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${figurineModelName}:generateContent?key=${apiKey}`;
+        
+        const textModelName = "gemini-2.5-flash-preview-05-20";
+        const textApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${textModelName}:generateContent?key=${apiKey}`;
+
         const MAX_FILE_SIZE_MB = 4; // Maximum file size in MB
         const MAX_DIMENSION = 2048; // Maximum width or height
 
@@ -256,6 +325,7 @@
         const uploadInput = document.getElementById('image-upload');
         const uploadBox = document.getElementById('upload-box');
         const uploadPrompt = document.getElementById('upload-prompt');
+        const processingMessage = document.getElementById('processing-message');
         const imagePreview = document.getElementById('image-preview');
         const promptInput = document.getElementById('prompt-input');
         const generateBtn = document.getElementById('generate-btn');
@@ -265,9 +335,8 @@
         const downloadBtn = document.getElementById('download-btn');
         const figurineGallery = document.getElementById('figurine-gallery');
         const figurineMaterialSelect = document.getElementById('figurine-material');
-        const messageModal = document.getElementById('message-modal');
-        const messageText = document.getElementById('message-text');
         const clearPromptBtn = document.getElementById('clear-prompt-btn');
+        const suggestPromptBtn = document.getElementById('suggest-prompt-btn');
 
 
         // Default prompt
@@ -275,7 +344,6 @@
         
         // Initialize Firebase services and set up event listeners
         document.addEventListener('DOMContentLoaded', () => {
-            console.log("DOM content loaded. Attaching event listeners.");
             
             // Wait for auth state to be ready before doing anything with Firebase
             try {
@@ -286,8 +354,7 @@
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
-                        console.log("Firebase Auth Ready. User ID:", userId);
-                        setupThreeJS();
+                        // setupThreeJS(); // Will be called by window.onload
                         loadFigurines();
                     } else {
                         try {
@@ -297,13 +364,11 @@
                                 await signInAnonymously(auth);
                             }
                         } catch (error) {
-                            console.error("Error signing in to Firebase:", error);
                             showCustomMessage("Failed to initialize the application. Please try again.");
                         }
                     }
                 });
             } catch (error) {
-                console.error("Error initializing Firebase:", error);
                 showCustomMessage("Failed to initialize the application. Please try again.");
             }
 
@@ -318,93 +383,111 @@
                 promptInput.value = '';
             });
 
-            // Event listener for download button, but we'll add it dynamically
-            // to avoid multiple listeners
+            // Event listener for the suggest prompt button
+            suggestPromptBtn.addEventListener('click', handleSuggestPrompt);
+
+            // Load AdSense after the DOM is ready to ensure containers have a width
+            loadAdSenseAds();
+
         });
 
-        function handleFileChange(event) {
-            const file = event.target.files[0];
-            console.log("File input change event fired. File:", file ? file.name : "none");
+        window.onload = function() {
+            setupThreeJS();
+        }
 
-            // Reset UI and state
-            updateGenerateButtonState(false);
-            uploadedImageData = null;
-            imagePreview.innerHTML = '';
-            imagePreview.classList.add('hidden');
-            uploadPrompt.classList.remove('hidden');
-
-            if (!file) {
-                console.warn("No file selected.");
-                return;
-            }
-
-            if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-                const message = `Please upload an image smaller than ${MAX_FILE_SIZE_MB}MB.`;
-                showCustomMessage(message);
-                console.error(message);
-                uploadInput.value = '';
-                return;
-            }
-            
-            try {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const dataUri = e.target.result;
-                    const img = new Image();
-                    
-                    img.onload = () => {
-                        if (img.width > MAX_DIMENSION || img.height > MAX_DIMENSION) {
-                            const message = `Please upload an image with dimensions less than ${MAX_DIMENSION}x${MAX_DIMENSION} pixels.`;
-                            showCustomMessage(message);
-                            console.error(message);
-                            uploadInput.value = '';
-                            return;
-                        }
-                        
-                        // Validation passed, store data and update UI
-                        const dataUrlParts = dataUri.split(',');
-                        uploadedImageData = dataUrlParts.length > 1 ? dataUrlParts[1] : null;
-                        uploadedImageMimeType = file.type;
-
-                        if (uploadedImageData) {
-                            imagePreview.innerHTML = `<img src="${dataUri}" class="w-full h-full object-contain rounded-xl">`;
-                            imagePreview.classList.remove('hidden');
-                            uploadPrompt.classList.add('hidden');
-                            updateGenerateButtonState(true);
-                            console.log("File successfully validated and image preview shown.");
-                        } else {
-                            const message = "There was an issue processing your image. The data was empty after reading the file.";
-                            console.error(message);
-                            showCustomMessage(message);
-                        }
-                    };
-                    
-                    img.onerror = () => {
-                        const message = "The uploaded file could not be loaded as an image. Please try a different file.";
-                        console.error(message);
-                        showCustomMessage(message);
-                        uploadInput.value = '';
-                        // No need to reset UI here, it was done at the start of the function.
-                    };
-                    
-                    img.src = dataUri;
-                };
-
-                reader.onerror = (e) => {
-                    const message = `An error occurred while reading the file: ${e.target.error.name}. Please try a different file.`;
-                    console.error(message, e.target.error);
-                    showCustomMessage(message);
-                    uploadInput.value = '';
-                };
-                
-                reader.readAsDataURL(file);
-            } catch (error) {
-                const message = `An unexpected error occurred: ${error.message}`;
-                console.error(message, error);
-                showCustomMessage(message);
-                uploadInput.value = '';
+        // Function to load AdSense ads
+        function loadAdSenseAds() {
+            if (window.adsbygoogle && window.adsbygoogle.push) {
+                window.adsbygoogle.push({});
+            } else {
+                setTimeout(loadAdSenseAds, 1000); // Retry after a delay
             }
         }
+
+        function handleFileChange(event) {
+            try {
+                const file = event.target.files[0];
+                
+                // Reset UI and state
+                updateGenerateButtonState(false);
+                uploadedFile = null;
+                imagePreview.innerHTML = '';
+                imagePreview.classList.add('hidden');
+                uploadPrompt.classList.remove('hidden');
+                processingMessage.classList.add('hidden');
+                
+                if (!file) {
+                    statusBox.textContent = "Error: No file was received.";
+                    statusBox.style.backgroundColor = '#fca5a5';
+                    return;
+                }
+
+                // Explicitly check for file type
+                if (!file.type.startsWith('image/')) {
+                    statusBox.textContent = "Error: File is not a valid image.";
+                    statusBox.style.backgroundColor = '#fca5a5';
+                    uploadInput.value = '';
+                    return;
+                }
+                
+                if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+                    statusBox.textContent = `Error: Image is too large (${(file.size / (1024 * 1024)).toFixed(2)}MB). Max is ${MAX_FILE_SIZE_MB}MB.`;
+                    statusBox.style.backgroundColor = '#fca5a5';
+                    uploadInput.value = '';
+                    return;
+                }
+
+                statusBox.textContent = "File selected! Processing...";
+                statusBox.style.backgroundColor = '#d1fae5';
+
+                // Store the file object for later use
+                uploadedFile = file;
+                uploadedImageMimeType = file.type;
+
+                // Show a temporary preview using createObjectURL
+                const objectURL = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                    URL.revokeObjectURL(objectURL); // Clean up the URL
+                    if (img.width > MAX_DIMENSION || img.height > MAX_DIMENSION) {
+                        statusBox.textContent = `Error: Image dimensions are too large (${img.width}x${img.height}). Max is ${MAX_DIMENSION}x${MAX_DIMENSION}.`;
+                        statusBox.style.backgroundColor = '#fca5a5';
+                        uploadInput.value = '';
+                        uploadedFile = null;
+                        return;
+                    }
+                    
+                    imagePreview.innerHTML = `<img src="${objectURL}" class="w-full h-full object-contain rounded-xl">`;
+                    imagePreview.classList.remove('hidden');
+                    processingMessage.classList.add('hidden');
+                    uploadPrompt.classList.add('hidden');
+                    updateGenerateButtonState(true);
+                    statusBox.textContent = "Preview generated successfully! You can now generate your figurine.";
+                    statusBox.style.backgroundColor = '#d1fae5';
+                };
+
+                img.onerror = () => {
+                    URL.revokeObjectURL(objectURL);
+                    statusBox.textContent = "Error: The uploaded file could not be loaded as an image.";
+                    statusBox.style.backgroundColor = '#fca5a5';
+                    uploadInput.value = '';
+                    uploadedFile = null;
+                    processingMessage.classList.add('hidden');
+                    uploadPrompt.classList.remove('hidden');
+                };
+
+                img.src = objectURL;
+                processingMessage.classList.remove('hidden');
+
+            } catch (error) {
+                statusBox.textContent = `An unexpected error occurred: ${error.message}.`;
+                statusBox.style.backgroundColor = '#fca5a5';
+                console.error("File upload error:", error);
+                uploadInput.value = '';
+                uploadedFile = null;
+            }
+        }
+
 
         function updateGenerateButtonState(isEnabled) {
             generateBtn.disabled = !isEnabled;
@@ -416,10 +499,8 @@
         }
 
         async function handleGenerate() {
-            console.log("Generate button clicked. Current uploadedImageData status:", uploadedImageData ? "ready" : "not available");
-            if (!uploadedImageData) {
+            if (!uploadedFile) {
                 showCustomMessage("Please upload a valid image first.");
-                console.error("Generate button clicked but no image data is available.");
                 return;
             }
             
@@ -427,102 +508,235 @@
             loadingDiv.classList.remove('hidden');
             updateGenerateButtonState(false);
 
-            const userPrompt = `${promptInput.value}. Material is ${figurineMaterialSelect.value}.`;
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const dataUri = e.target.result;
+                const dataUrlParts = dataUri.split(',');
+                const uploadedImageData = dataUrlParts.length > 1 ? dataUrlParts[1] : null;
+
+                if (!uploadedImageData) {
+                    const message = "Failed to convert image to Base64 data.";
+                    showCustomMessage(message);
+                    loadingDiv.classList.add('hidden');
+                    updateGenerateButtonState(true);
+                    return;
+                }
+                
+                const userPrompt = `${promptInput.value}. Material is ${figurineMaterialSelect.value}.`;
+
+                const payload = {
+                    contents: [
+                        {
+                            parts: [
+                                { text: userPrompt },
+                                {
+                                    inlineData: {
+                                        mimeType: uploadedImageMimeType,
+                                        data: uploadedImageData
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    generationConfig: {
+                        responseModalities: ["TEXT", "IMAGE"],
+                    },
+                };
+
+                try {
+                    let response = null;
+                    let retries = 0;
+                    const maxRetries = 5;
+                    const baseDelay = 1000;
+
+                    while (retries < maxRetries) {
+                        try {
+                            response = await fetch(figurineApiUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                            if (response.status !== 429) {
+                                break;
+                            }
+                        } catch (error) {}
+                        retries++;
+                        await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
+                    }
+
+                    if (!response || !response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
+                    }
+
+                    const result = await response.json();
+                    const part = result?.candidates?.[0]?.content?.parts?.[0];
+
+                    if (part && part.inlineData && part.inlineData.data) {
+                        const base64Data = part.inlineData.data;
+                        const mimeType = part.inlineData.mimeType || 'image/png';
+                        const dataUri = `data:${mimeType};base64,${base64Data}`;
+                        
+                        loadFigurineTo3D(dataUri);
+                        resultContainer.classList.remove('hidden');
+                        
+                        // Add download functionality
+                        downloadBtn.onclick = () => {
+                            const a = document.createElement('a');
+                            a.href = dataUri;
+                            a.download = 'figurine.png';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                        };
+
+                        await saveFigurine(base64Data, userPrompt);
+                        showCustomMessage("Figurine generated successfully!");
+                    } else {
+                        const message = "Oops! The AI did not return an image. This can happen with certain prompts.";
+                        showCustomMessage(message);
+                    }
+                } catch (error) {
+                    const message = `An error occurred: ${error.message}. Please try again.`;
+                    showCustomMessage(message);
+                } finally {
+                    loadingDiv.classList.add('hidden');
+                    updateGenerateButtonState(true);
+                }
+            };
+            reader.readAsDataURL(uploadedFile);
+        }
+
+        async function handleSuggestPrompt() {
+            if (!uploadedFile) {
+                showCustomMessage("Please upload a valid image first.");
+                return;
+            }
+
+            const oldPromptText = promptInput.value;
+            promptInput.value = 'Generating prompt suggestions...';
+            suggestPromptBtn.disabled = true;
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const dataUri = e.target.result;
+                const dataUrlParts = dataUri.split(',');
+                const uploadedImageData = dataUrlParts.length > 1 ? dataUrlParts[1] : null;
+
+                if (!uploadedImageData) {
+                    showCustomMessage("Failed to convert image for prompt suggestion.");
+                    promptInput.value = oldPromptText;
+                    suggestPromptBtn.disabled = false;
+                    return;
+                }
+
+                const systemInstruction = "Act as a creative prompt engineer for an AI image generator. Based on the following image and user's initial description, suggest a detailed and descriptive prompt for a realistic figurine. The prompt should be a single paragraph and start with 'A realistic figurine...'";
+
+                const payload = {
+                    contents: [
+                        {
+                            parts: [
+                                { text: `User's description: ${oldPromptText}` },
+                                {
+                                    inlineData: {
+                                        mimeType: uploadedImageMimeType,
+                                        data: uploadedImageData
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    systemInstruction: {
+                        parts: [{ text: systemInstruction }]
+                    }
+                };
+                
+                try {
+                    const response = await fetch(textApiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
+                    }
+
+                    const result = await response.json();
+                    const suggestedPrompt = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    
+                    if (suggestedPrompt) {
+                        promptInput.value = suggestedPrompt;
+                    } else {
+                        showCustomMessage("Could not generate a prompt. Please try again.");
+                        promptInput.value = oldPromptText;
+                    }
+                } catch (error) {
+                    showCustomMessage(`An error occurred while suggesting a prompt: ${error.message}.`);
+                    promptInput.value = oldPromptText;
+                } finally {
+                    suggestPromptBtn.disabled = false;
+                }
+            };
+            reader.readAsDataURL(uploadedFile);
+        }
+
+        async function handleGenerateCaption(imageData) {
+            const oldCaptionText = "Generating caption...";
+            showCustomMessage(oldCaptionText);
+
+            const systemInstruction = "Act as a social media content creator. Based on this image, write a short, creative, and witty caption. The caption should be 1-2 sentences and sound engaging for a social media audience.";
 
             const payload = {
                 contents: [
                     {
                         parts: [
-                            { text: userPrompt },
+                            { text: "Generate a caption for this figurine:" },
                             {
                                 inlineData: {
-                                    mimeType: uploadedImageMimeType,
-                                    data: uploadedImageData
+                                    mimeType: "image/jpeg",
+                                    data: imageData
                                 }
                             }
                         ]
                     }
                 ],
-                generationConfig: {
-                    responseModalities: ["TEXT", "IMAGE"],
-                },
+                systemInstruction: {
+                    parts: [{ text: systemInstruction }]
+                    }
             };
-            console.log("Attempting to send payload to API.");
 
             try {
-                let response = null;
-                let retries = 0;
-                const maxRetries = 5;
-                const baseDelay = 1000;
-
-                while (retries < maxRetries) {
-                    try {
-                        console.log(`Fetch attempt ${retries + 1}...`);
-                        response = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-                        if (response.status !== 429) {
-                            console.log("Fetch successful, status:", response.status);
-                            break;
-                        }
-                    } catch (error) {
-                        console.error('Fetch attempt failed:', error);
-                    }
-                    retries++;
-                    await new Promise(res => setTimeout(res, baseDelay * Math.pow(2, retries)));
-                }
-
-                if (!response || !response.ok) {
+                const response = await fetch(textApiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
                     const errorData = await response.json();
-                    console.error('API Error Response:', errorData);
                     throw new Error(`API Error: ${errorData.error.message || response.statusText}`);
                 }
 
                 const result = await response.json();
-                const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+                const generatedCaption = result?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-                if (part && part.inlineData && part.inlineData.data) {
-                    console.log("Received valid image data from API.");
-                    const base64Data = part.inlineData.data;
-                    const mimeType = part.inlineData.mimeType || 'image/png';
-                    const dataUri = `data:${mimeType};base64,${base64Data}`;
-                    
-                    loadFigurineTo3D(dataUri);
-                    resultContainer.classList.remove('hidden');
-                    
-                    // Add download functionality
-                    downloadBtn.onclick = () => {
-                        const a = document.createElement('a');
-                        a.href = dataUri;
-                        a.download = 'figurine.png';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                    };
-
-                    await saveFigurine(base64Data, userPrompt);
-                    showCustomMessage("Figurine generated successfully!");
+                if (generatedCaption) {
+                    showCustomMessage(generatedCaption);
                 } else {
-                    const message = "Oops! The AI did not return an image. This can happen with certain prompts.";
-                    console.error(message, result);
-                    showCustomMessage(message);
+                    showCustomMessage("Could not generate a caption. The AI might not have enough information.");
                 }
             } catch (error) {
-                const message = `An error occurred: ${error.message}. Please try again.`;
-                console.error('Failed to generate figurine:', error);
-                showCustomMessage(message);
-            } finally {
-                loadingDiv.classList.add('hidden');
-                updateGenerateButtonState(true);
+                showCustomMessage(`An error occurred while generating the caption: ${error.message}.`);
             }
         }
+
 
         // Initialize Three.js scene
         function setupThreeJS() {
             if (!threeCanvas) {
-                console.error("Three.js canvas not found.");
+                console.error("3D canvas element not found.");
                 return;
             }
             scene = new THREE.Scene();
@@ -573,7 +787,6 @@
         // Load figurine from a data URI onto the 3D model
         function loadFigurineTo3D(dataUri) {
             if (!figurineMesh) {
-                console.error("Figurine mesh not initialized.");
                 return;
             }
             const textureLoader = new THREE.TextureLoader();
@@ -581,7 +794,6 @@
                 const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
                 figurineMesh.material = material;
             }, undefined, (err) => {
-                console.error("Error loading texture:", err);
                 showCustomMessage("Failed to load the figurine's texture. Please try again.");
             });
         }
@@ -589,7 +801,6 @@
         // Save figurine data to Firestore
         async function saveFigurine(imageData, userPrompt) {
             if (!userId) {
-                console.error("User not authenticated. Cannot save.");
                 return;
             }
             try {
@@ -600,7 +811,6 @@
                     createdAt: serverTimestamp(),
                     userId: userId
                 });
-                console.log("Figurine saved successfully!");
             } catch (error) {
                 console.error("Error saving figurine to Firestore:", error);
             }
@@ -630,28 +840,36 @@
                 } else {
                     figurines.forEach(figurine => {
                         if (figurine.imageData) {
+                            const card = document.createElement('div');
+                            card.className = 'gallery-card relative group';
+
                             const img = document.createElement('img');
                             img.src = `data:image/jpeg;base64,${figurine.imageData}`;
                             img.alt = figurine.prompt;
-                            img.className = 'w-full h-auto rounded-xl shadow-lg cursor-pointer transition-transform duration-200 hover:scale-105';
+                            img.className = 'w-full h-auto rounded-xl shadow-lg cursor-pointer transition-transform duration-200';
+                            
+                            const captionBtn = document.createElement('button');
+                            captionBtn.className = 'absolute top-2 right-2 p-2 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300';
+                            captionBtn.innerHTML = '<span class="text-xl">✨</span>'; // Using sparkle emoji as a button icon
+                            captionBtn.onclick = (e) => {
+                                e.stopPropagation();
+                                handleGenerateCaption(figurine.imageData);
+                            };
+
                             img.onclick = () => {
                                 loadFigurineTo3D(img.src);
                                 resultContainer.classList.remove('hidden');
                             };
-                            figurineGallery.appendChild(img);
+                            
+                            card.appendChild(img);
+                            card.appendChild(captionBtn);
+                            figurineGallery.appendChild(card);
                         }
                     });
                 }
             }, (error) => {
                 console.error("Error fetching figurines from Firestore:", error);
             });
-        }
-
-        // Function to show a custom message box
-        function showCustomMessage(message) {
-            messageText.textContent = message;
-            messageModal.style.display = 'block';
-            console.log("Custom Message Shown:", message);
         }
     </script>
 </body>
